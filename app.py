@@ -18,7 +18,7 @@ if api_key:
     try:
         # 設定 Google Gemini
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # 使用較強的模型來分析合約
+        model = genai.GenerativeModel('gemini-pro') # 使用較強的模型來分析合約
 
         # 讓使用者輸入合約內容
         contract_content = st.text_area("📄 請將合約內容貼在這裡：", height=300)
@@ -54,3 +54,4 @@ if api_key:
         st.error(f"發生錯誤，請檢查 API Key 是否正確。\n錯誤訊息: {e}")
 else:
     st.warning("👈 請先在左側欄位輸入 API Key 才能啟用律師服務。")
+
