@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # --- 設定頁面資訊 ---
 st.set_page_config(page_title="24小時數位合約律師", page_icon="⚖️")
@@ -21,8 +22,8 @@ else:
         # 設定 Google Gemini
         genai.configure(api_key=api_key)
         
-        # ★★★ 關鍵修改：使用你名單裡抓到的最新模型 ★★★
-        model = genai.GenerativeModel('gemini-3-pro-preview') 
+        # 使用你帳號支援的快速模型
+        model = genai.GenerativeModel('gemini-2.0-flash') 
 
         # 讓使用者輸入合約內容
         contract_content = st.text_area("📄 請將合約內容貼在這裡：", height=300)
@@ -35,30 +36,50 @@ else:
         1. **🚦 整體風險評估**：給予 紅燈(危險)/黃燈(注意)/綠燈(安全) 的評級。
         2. **⚠️ 關鍵風險條款**：列出對使用者最不利的 3-5 個條款，並解釋為什麼危險。
         3. **🛡️ 修改建議**：針對上述風險，提供具體的修改或談判建議。
-        4. **💡 隱藏陷阱**：指出合約中「沒寫出來」但應該要有的權益（例如：自然損耗定義、提前解約條款）。
+        4. **💡 隱藏陷阱**：指出合約中「沒寫出來」但應該要有的權益。
         """
 
         if st.button("🚀 啟動數位防護罩 (開始分析)"):
             if not contract_content.strip():
                 st.warning("⚠️ 請先貼上合約內容喔！")
             else:
-                with st.spinner("⚖️ 律師正在逐條審閱您的合約，請稍候..."):
-                    # 組合提示詞
-                    full_prompt = f"{system_prompt}\n\n以下是合約內容：\n{contract_content}"
+                st.divider()
+                st.subheader("📊 分析報告")
+                
+                # 建立一個空框框來放打字機文字
+                text_placeholder = st.empty()
+                full_text = ""
+
+                # 組合提示詞
+                full_prompt = f"{system_prompt}\n\n以下是合約內容：\n{contract_content}"
+
+                try:
+                    # ★★★ 關鍵修改 1：關閉安全過濾 (避免法律文字被當成暴力內容) ★★★
+                    safety_settings = {
+                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                    }
+
+                    # ★★★ 關鍵修改 2：啟用 stream=True (流式傳輸) ★★★
+                    response = model.generate_content(
+                        full_prompt, 
+                        stream=True, 
+                        safety_settings=safety_settings
+                    )
                     
-                    try:
-                        # 發送給 AI
-                        response = model.generate_content(full_prompt)
-                        
-                        # 顯示結果
-                        st.divider()
-                        st.subheader("📊 分析報告")
-                        if response.text:
-                            st.markdown(response.text)
-                        
-                    except Exception as e:
-                        st.error(f"分析被中斷：{e}")
+                    # 像打字機一樣一個字一個字噴出來
+                    for chunk in response:
+                        if chunk.text:
+                            full_text += chunk.text
+                            text_placeholder.markdown(full_text + "▌") # 加個游標看起來在動
+                    
+                    # 最後把游標拿掉
+                    text_placeholder.markdown(full_text)
+
+                except Exception as e:
+                    st.error(f"分析發生錯誤：{e}")
 
     except Exception as e:
         st.error(f"發生錯誤，請檢查 API Key 是否正確。\n錯誤訊息：{e}")
-
