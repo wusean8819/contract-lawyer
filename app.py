@@ -1,78 +1,42 @@
 import streamlit as st
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import importlib.metadata
 
-# --- 設定頁面資訊 ---
+# --- 1. 檢查真實版本 (抓兇手) ---
+try:
+    lib_version = importlib.metadata.version("google-generativeai")
+except:
+    lib_version = "無法讀取"
+
+# --- 設定頁面 ---
 st.set_page_config(page_title="24小時數位合約律師", page_icon="⚖️")
+st.title("⚖️ 數位合約律師 (診斷模式)")
 
-st.title("⚖️ 你的 24 小時口袋數位合約律師")
-st.markdown("別讓合約成為看不懂的天書。我們的 AI 防護罩為你預判風險，像紅綠燈一樣標示陷阱。")
+# 顯示版本號 (這行最重要)
+st.info(f"🔍 目前系統安裝的 Google 套件版本：{lib_version}")
+st.write("如果是 0.5.0 以下，代表雲端沒有更新成功，那是卡住的主因。")
 
-# --- 側邊欄：設定 API Key ---
-with st.sidebar:
-    st.header("🔑 啟動金鑰")
-    api_key = st.text_input("請輸入 Google API Key", type="password")
-    
-# --- 主程式邏輯 ---
+# --- 設定 API Key ---
+api_key = st.sidebar.text_input("請輸入 Google API Key", type="password")
+
 if not api_key:
-    st.warning("⬅️ 請先在左側欄位輸入 API Key 才能啟用律師服務。")
+    st.warning("⬅️ 請輸入 Key")
 else:
     try:
-        # 1. 設定連線
         genai.configure(api_key=api_key)
         
-        # ★★★ 關鍵修改 1：使用你名單裡有的 2.0 Flash (因為你沒有 1.5) ★★★
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        # 使用最標準的 1.5 Flash
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
-        # 2. 介面
-        contract_content = st.text_area("📄 請將合約內容貼在這裡：", height=300)
+        contract_content = st.text_area("📄 貼上合約內容：", height=200, value="測試合約：甲乙雙方同意...")
 
-        if st.button("🚀 啟動數位防護罩 (開始分析)"):
-            if not contract_content.strip():
-                st.warning("⚠️ 請先貼上合約內容喔！")
-            else:
-                st.divider()
-                st.subheader("📊 分析報告")
-                text_placeholder = st.empty()
+        if st.button("🚀 開始分析 (非串流模式)"):
+            with st.spinner("連線中...如果這裡卡住超過 10 秒就是環境問題"):
+                # 關閉 stream，強迫它一次回傳，比較容易看到錯誤
+                response = model.generate_content(f"請分析這份合約：{contract_content}")
                 
-                # 3. 組合提示詞
-                prompt = f"""
-                你是一位專業律師。請針對以下合約內容進行風險評估：
-                1. 🚦 風險評估 (紅/黃/綠燈)
-                2. ⚠️ 關鍵風險條款 (3-5點)
-                3. 🛡️ 修改建議
-                
-                合約內容：
-                {contract_content}
-                """
-                
-                # ★★★ 關鍵修改 2：徹底關閉安全過濾 (防止 2.0 模型卡住) ★★★
-                safety_settings = {
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                }
-
-                try:
-                    # ★★★ 關鍵修改 3：開啟 stream=True (打字機模式) ★★★
-                    response = model.generate_content(
-                        prompt, 
-                        stream=True, 
-                        safety_settings=safety_settings
-                    )
-                    
-                    # 讓字一個一個跳出來，確保不會看起來像當機
-                    full_text = ""
-                    for chunk in response:
-                        if chunk.text:
-                            full_text += chunk.text
-                            text_placeholder.markdown(full_text + "▌")
-                    
-                    text_placeholder.markdown(full_text) # 顯示最終結果
-                    
-                except Exception as inner_e:
-                    st.error(f"分析被中斷，可能是模型還在熱身。\n錯誤訊息：{inner_e}")
+                st.success("✅ 成功回傳！")
+                st.markdown(response.text)
 
     except Exception as e:
-        st.error(f"系統錯誤：{e}")
+        st.error(f"❌ 發生錯誤：{e}")
