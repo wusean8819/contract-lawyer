@@ -22,7 +22,7 @@ else:
         genai.configure(api_key=api_key)
         
         # ★★★ 關鍵修改：使用你名單裡抓到的最新模型 ★★★
-        model = genai.GenerativeModel('gemini-2.5-flash') 
+        model = genai.GenerativeModel('gemini-3-pro-preview') 
 
         # 讓使用者輸入合約內容
         contract_content = st.text_area("📄 請將合約內容貼在這裡：", height=300)
@@ -61,3 +61,4 @@ else:
 
     except Exception as e:
         st.error(f"發生錯誤，請檢查 API Key 是否正確。\n錯誤訊息：{e}")
+
