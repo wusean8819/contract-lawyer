@@ -1,43 +1,31 @@
 import streamlit as st
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import time
 
 # --- 設定頁面資訊 ---
 st.set_page_config(page_title="24小時數位合約律師", page_icon="⚖️")
-
 st.title("⚖️ 你的 24 小時口袋數位合約律師")
-st.markdown("別讓合約成為看不懂的天書。我們的 AI 防護罩為你預判風險，像紅綠燈一樣標示陷阱，守護你的安心。")
+st.markdown("別讓合約成為看不懂的天書。我們的 AI 防護罩為你預判風險，像紅綠燈一樣標示陷阱。")
 
 # --- 側邊欄：設定 API Key ---
 with st.sidebar:
     st.header("🔑 啟動金鑰")
     api_key = st.text_input("請輸入 Google API Key", type="password")
-    st.info("請將剛剛申請的 Key 貼在這裡，按下 Enter 即可開始使用。")
-
+    
 # --- 主程式邏輯 ---
 if not api_key:
     st.warning("⬅️ 請先在左側欄位輸入 API Key 才能啟用律師服務。")
 else:
     try:
-        # 設定 Google Gemini
+        # 1. 設定連線
         genai.configure(api_key=api_key)
         
-        # ★★★ 關鍵 1：使用速度最快的 2.0 Flash 模型 ★★★
-        model = genai.GenerativeModel('gemini-2.0-flash') 
+        # ★★★ 關鍵修改：使用你在清單中看到的「最新穩定版指標」 ★★★
+        # 這會自動導向目前最穩的 Flash 版本，避免 2.0 實驗版的不穩定
+        model = genai.GenerativeModel('gemini-flash-latest')
 
-        # 讓使用者輸入合約內容
+        # 2. 介面
         contract_content = st.text_area("📄 請將合約內容貼在這裡：", height=300)
-
-        # 設定 AI 的角色
-        system_prompt = """
-        你是一位專業的台灣律師，專精於租賃與一般民事合約。
-        請幫我分析使用者提供的合約內容。
-        請依照以下格式輸出分析結果：
-        1. **🚦 整體風險評估**：給予 紅燈(危險)/黃燈(注意)/綠燈(安全) 的評級。
-        2. **⚠️ 關鍵風險條款**：列出對使用者最不利的 3-5 個條款，並解釋為什麼危險。
-        3. **🛡️ 修改建議**：針對上述風險，提供具體的修改或談判建議。
-        4. **💡 隱藏陷阱**：指出合約中「沒寫出來」但應該要有的權益。
-        """
 
         if st.button("🚀 啟動數位防護罩 (開始分析)"):
             if not contract_content.strip():
@@ -45,41 +33,36 @@ else:
             else:
                 st.divider()
                 st.subheader("📊 分析報告")
-                
-                # 建立一個空框框來放打字機文字
                 text_placeholder = st.empty()
-                full_text = ""
-
-                # 組合提示詞
-                full_prompt = f"{system_prompt}\n\n以下是合約內容：\n{contract_content}"
-
+                
+                # 3. 組合提示詞 (精簡版)
+                prompt = f"""
+                你是一位專業律師。請針對以下合約內容進行風險評估：
+                1. 風險評估(紅/黃/綠燈)
+                2. 關鍵風險條款
+                3. 修改建議
+                
+                合約內容：
+                {contract_content}
+                """
+                
+                # 4. 發送請求 (使用流式傳輸，確保不會卡死)
                 try:
-                    # ★★★ 關鍵 2：關閉安全過濾 (避免法律文字被當成暴力內容卡住) ★★★
-                    safety_settings = {
-                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                    }
-
-                    # ★★★ 關鍵 3：啟用 stream=True (流式傳輸，像打字機一樣) ★★★
-                    response = model.generate_content(
-                        full_prompt, 
-                        stream=True, 
-                        safety_settings=safety_settings
-                    )
+                    response = model.generate_content(prompt, stream=True)
                     
-                    # 這裡會讓字一個一個跳出來，你就知道它沒有當機
+                    # 顯示打字機效果
+                    full_text = ""
                     for chunk in response:
                         if chunk.text:
                             full_text += chunk.text
-                            text_placeholder.markdown(full_text + "▌") # 加個游標看起來在動
+                            text_placeholder.markdown(full_text + "▌")
+                            time.sleep(0.01) # 稍微緩衝，讓顯示更順暢
                     
-                    # 最後把游標拿掉，顯示完整文字
-                    text_placeholder.markdown(full_text)
-
-                except Exception as e:
-                    st.error(f"分析發生錯誤：{e}")
+                    text_placeholder.markdown(full_text) # 顯示最終結果
+                    
+                except Exception as inner_e:
+                    # 如果連線失敗，會顯示具體原因
+                    st.error(f"連線中斷，請重試。\n技術錯誤訊息：{inner_e}")
 
     except Exception as e:
-        st.error(f"發生錯誤，請檢查 API Key 是否正確。\n錯誤訊息：{e}")
+        st.error(f"API Key 驗證失敗或是系統錯誤：{e}")
