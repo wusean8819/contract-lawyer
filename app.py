@@ -22,7 +22,7 @@ else:
         # 設定 Google Gemini
         genai.configure(api_key=api_key)
         
-        # 使用你帳號支援的快速模型
+        # ★★★ 關鍵 1：使用速度最快的 2.0 Flash 模型 ★★★
         model = genai.GenerativeModel('gemini-2.0-flash') 
 
         # 讓使用者輸入合約內容
@@ -54,7 +54,7 @@ else:
                 full_prompt = f"{system_prompt}\n\n以下是合約內容：\n{contract_content}"
 
                 try:
-                    # ★★★ 關鍵修改 1：關閉安全過濾 (避免法律文字被當成暴力內容) ★★★
+                    # ★★★ 關鍵 2：關閉安全過濾 (避免法律文字被當成暴力內容卡住) ★★★
                     safety_settings = {
                         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -62,20 +62,20 @@ else:
                         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                     }
 
-                    # ★★★ 關鍵修改 2：啟用 stream=True (流式傳輸) ★★★
+                    # ★★★ 關鍵 3：啟用 stream=True (流式傳輸，像打字機一樣) ★★★
                     response = model.generate_content(
                         full_prompt, 
                         stream=True, 
                         safety_settings=safety_settings
                     )
                     
-                    # 像打字機一樣一個字一個字噴出來
+                    # 這裡會讓字一個一個跳出來，你就知道它沒有當機
                     for chunk in response:
                         if chunk.text:
                             full_text += chunk.text
                             text_placeholder.markdown(full_text + "▌") # 加個游標看起來在動
                     
-                    # 最後把游標拿掉
+                    # 最後把游標拿掉，顯示完整文字
                     text_placeholder.markdown(full_text)
 
                 except Exception as e:
