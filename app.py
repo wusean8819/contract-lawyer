@@ -1,11 +1,12 @@
-import streamlit as st
+=import streamlit as st
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import time
 
 # --- 設定頁面資訊 ---
 st.set_page_config(page_title="24小時數位合約律師", page_icon="⚖️")
 st.title("⚖️ 你的 24 小時口袋數位合約律師")
-st.markdown("現在版本：0.8.5 | 模型：Gemini 2.0 Flash (解鎖版)")
+st.markdown("版本：自動導航版 (Auto-Detect) | 環境：0.8.5 已修復")
 
 # --- 側邊欄：設定 API Key ---
 api_key = st.sidebar.text_input("🔑 請輸入 Google API Key", type="password")
@@ -17,8 +18,38 @@ else:
         # 1. 設定連線
         genai.configure(api_key=api_key)
         
-        # ★★★ 關鍵 1：直接指定你清單裡有的 2.0 Flash ★★★
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        # ★★★ 關鍵技術：自動導航 (Auto-Pilot) ★★★
+        # 這段程式會去問 Google 你的帳號能用什麼，然後選「最穩」的那個
+        with st.spinner("正在為您匹配最佳 AI 大腦..."):
+            target_model_name = None
+            try:
+                available_models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        # 記錄所有能用的模型名字
+                        model_name = m.name.replace('models/', '')
+                        available_models.append(model_name)
+                
+                # --- 智慧挑選邏輯 ---
+                # 優先找 1.5-flash (因為它最穩，且沒有額度限制)
+                if any('1.5-flash' in m for m in available_models):
+                    target_model_name = next((m for m in available_models if '1.5-flash' in m), None)
+                # 如果沒有，才找 2.0-flash (比較快但可能有額度限制)
+                elif any('2.0-flash' in m for m in available_models):
+                    target_model_name = next((m for m in available_models if '2.0-flash' in m), None)
+                # 真的都沒有，就選第一個
+                else:
+                    target_model_name = available_models[0]
+                    
+            except Exception as e:
+                # 萬一連線有問題，直接盲猜一個最保險的
+                target_model_name = 'gemini-1.5-flash'
+
+        # 顯示結果讓你知道它選了誰
+        st.sidebar.success(f"✅ 已自動連線：\n{target_model_name}")
+        
+        # 建立模型
+        model = genai.GenerativeModel(target_model_name)
 
         # 2. 合約輸入區
         contract_content = st.text_area("📄 請將合約內容貼在這裡：", height=300)
@@ -31,10 +62,7 @@ else:
                 st.divider()
                 st.subheader("📊 分析報告")
                 
-                # 狀態顯示區 (讓你知道沒當機)
                 status_text = st.empty()
-                status_text.info("🔄 正在連線 Google 大腦...")
-                
                 result_area = st.empty()
                 full_text = ""
                 
@@ -45,7 +73,7 @@ else:
                 {contract_content}
                 """
 
-                # ★★★ 關鍵 2：徹底關閉安全過濾 (解決卡住的主因) ★★★
+                # 設定：關閉安全過濾 (避免誤判法律用語)
                 safety_settings = {
                     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -54,14 +82,14 @@ else:
                 }
 
                 try:
-                    # 開始分析
+                    status_text.info(f"🔄 正在使用 {target_model_name} 分析中...")
+                    
+                    # 開始分析 (使用流式傳輸)
                     response = model.generate_content(
                         prompt, 
                         stream=True, 
                         safety_settings=safety_settings
                     )
-                    
-                    status_text.success("✅ 連線成功！正在撰寫報告...")
                     
                     # 打字機效果
                     for chunk in response:
@@ -71,11 +99,12 @@ else:
                     
                     # 完成
                     result_area.markdown(full_text)
-                    status_text.empty() # 隱藏狀態列
+                    status_text.empty()
                     
                 except Exception as e:
-                    st.error(f"分析過程發生錯誤：{e}")
-                    st.error("如果顯示 429 Resource Exhausted，代表測試太多次了，請等 1 分鐘再試。")
+                    st.error(f"分析中斷：{e}")
+                    if "429" in str(e):
+                        st.error("額度限制提示：請稍等 1 分鐘後再試。")
 
     except Exception as e:
         st.error(f"連線設定錯誤：{e}")
