@@ -13,17 +13,15 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS 樣式 (精簡版：僅保留卡片與字體優化) ---
+# --- 2. CSS 樣式 (維持最簡潔與 UX 優化版) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
     :root { --primary: #2563eb; --success: #10b981; --bg: #f8fafc; --card: #ffffff; }
     .stApp { background-color: var(--bg); font-family: 'Noto Sans TC', sans-serif; }
     
-    /* 隱藏預設元素 */
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* 卡片風格 */
     .css-card { 
         background: var(--card); 
         padding: 2rem; 
@@ -33,7 +31,6 @@ st.markdown("""
         margin-bottom: 20px; 
     }
     
-    /* 按鈕優化 */
     .stButton>button { border-radius: 8px; font-weight: 600; height: 3rem; width: 100%; }
     
     /* Tabs 優化 */
@@ -48,6 +45,7 @@ if 'analysis_result' not in st.session_state: st.session_state.analysis_result =
 if 'negotiation_tips' not in st.session_state: st.session_state.negotiation_tips = "" 
 if 'contract_content' not in st.session_state: st.session_state.contract_content = ""
 if 'score_data' not in st.session_state: st.session_state.score_data = {"score": 0, "risk": "未評估", "traps": 0}
+if 'current_model_name' not in st.session_state: st.session_state.current_model_name = "Auto"
 
 # --- 4. 輔助函數 ---
 def safe_extract_score(text):
@@ -107,9 +105,48 @@ def generate_with_retry(model, prompt, max_retries=3):
                 raise e
     raise Exception("重試次數過多，請稍後再試。")
 
-def get_model(key):
-    genai.configure(api_key=key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+# ★★★ 關鍵修復：自動偵測並選用最佳模型 ★★★
+def get_best_model(api_key):
+    genai.configure(api_key=api_key)
+    
+    target_model = None
+    available_models = []
+    
+    try:
+        # 1. 獲取所有可用模型
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+        
+        # 2. 定義優先順序 (Flash 快 -> Pro 強 -> 1.0 舊版)
+        preferences = [
+            "gemini-1.5-flash", # 首選：快速便宜
+            "gemini-1.5-pro",   # 次選：強大
+            "gemini-1.0-pro",   # 備選
+            "gemini-pro"        # 最後手段
+        ]
+        
+        # 3. 匹配模型
+        for pref in preferences:
+            for model_name in available_models:
+                if pref in model_name:
+                    target_model = model_name
+                    break
+            if target_model: break
+            
+        # 4. 如果都沒找到，使用列表中的第一個，或者強制預設
+        if not target_model:
+            if available_models:
+                target_model = available_models[0]
+            else:
+                target_model = "gemini-1.5-flash" # 強制預設，雖然可能失敗
+                
+        st.session_state.current_model_name = target_model # 記錄下來給 UI 顯示
+        return genai.GenerativeModel(target_model)
+        
+    except Exception as e:
+        # 如果連 list_models 都失敗 (例如 key 錯誤)，直接回傳預設物件讓後面報錯
+        return genai.GenerativeModel("gemini-1.5-flash")
 
 # --- 5. 設定區與 Key ---
 api_key = None
@@ -154,9 +191,11 @@ try:
                 if not user_input.strip() and not api_key:
                     st.error("⚠️ 請確認 API Key 已設定且內容不為空")
                 else:
-                    with st.spinner("⚖️ AI 律師正在閱卷中... (約需 10-20 秒)"):
+                    with st.spinner("🔍 正在尋找最佳模型並閱卷中..."):
                         try:
-                            model = get_model(api_key)
+                            # ★★★ 呼叫新的自動選模函數 ★★★
+                            model = get_best_model(api_key)
+                            
                             prompt = f"""
                             你是一位專業律師。請分析以下合約。
                             【輸出規則】
@@ -189,10 +228,13 @@ try:
                         except Exception as e:
                             st.error(f"分析失敗: {e}")
 
-    # === 頁面 2: 結果儀表板 (UX 優化版) ===
+    # === 頁面 2: 結果儀表板 ===
     elif st.session_state.page == 'result':
         
-        # 1. 頂部儀表板 (Dashboard)
+        # 顯示使用的模型 (放在右上角或不明顯處，增加信任感)
+        st.toast(f"🤖 使用模型：{st.session_state.current_model_name}", icon="⚡")
+
+        # 1. 頂部儀表板
         raw_score = st.session_state.score_data['score']
         score = safe_extract_score(raw_score)
         traps = safe_extract_int(st.session_state.score_data['traps'])
@@ -219,7 +261,7 @@ try:
         </div>
         """, unsafe_allow_html=True)
 
-        # 2. 分頁內容區 (Tabs) - UX 核心改進
+        # 2. 分頁內容區 (Tabs)
         tab1, tab2, tab3 = st.tabs(["⚠️ 風險深度分析", "🗣️ 談判策略劇本", "📄 原始合約內容"])
 
         with tab1:
