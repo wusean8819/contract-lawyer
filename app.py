@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS 樣式 (優化版) ---
+# --- 2. CSS 樣式 ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
@@ -34,7 +34,7 @@ st.markdown("""
         padding: 20px 0;
         margin-bottom: 20px;
         background-color: var(--bg);
-        position: sticky; top: 0; z-index: 999; /* 強制置頂 */
+        position: sticky; top: 0; z-index: 999;
     }
     .progress-track {
         display: flex; justify-content: space-between; align-items: center;
@@ -66,13 +66,6 @@ st.markdown("""
         box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
         margin-bottom: 20px;
     }
-    
-    /* 錯誤訊息美化 */
-    .stException { display: none !important; } /* 隱藏原生報錯 */
-    .error-box {
-        background: #fef2f2; border: 1px solid #fee2e2; color: #991b1b;
-        padding: 15px; border-radius: 8px; margin: 10px 0;
-    }
 
     /* 按鈕 */
     .stButton>button {
@@ -81,8 +74,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 狀態管理 (初始化) ---
-# 確保所有變數都存在，防止 NameError
+# --- 3. 狀態管理 ---
 if 'page' not in st.session_state: st.session_state.page = 'input'
 if 'step' not in st.session_state: st.session_state.step = 1 
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = ""
@@ -92,7 +84,6 @@ if 'score_data' not in st.session_state: st.session_state.score_data = {"score":
 
 # --- 4. 輔助函數 ---
 def safe_extract_score(text):
-    """ 超級防呆：防止 1/10 或文字導致崩潰 """
     try:
         text_str = str(text).strip()
         fraction_match = re.search(r'(\d+)\s*/\s*(\d+)', text_str)
@@ -153,7 +144,18 @@ def get_model(key):
     genai.configure(api_key=key)
     return genai.GenerativeModel("gemini-1.5-flash")
 
-# --- 5. 抓取 API Key ---
+# --- 5. 提示詞模板 (防止語法錯誤，移到全域) ---
+PROMPT_TEMPLATE = """
+你是一位專業律師。請分析以下合約。
+【輸出規則】
+1. [BLOCK_DATA]分數(0-100),風險等級,陷阱數[/BLOCK_DATA]
+2. [BLOCK_REPORT] 請用 Markdown 格式列出 3 個致命風險。使用 Emoji 🔴 ⚠️。
+3. [BLOCK_TIPS] 提供談判話術。
+合約內容：
+{}
+"""
+
+# --- 6. 抓取 API Key ---
 api_key = None
 try:
     if "GOOGLE_API_KEY" in st.secrets:
@@ -171,9 +173,8 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# --- 主程式邏輯 (全域防護) ---
+# --- 主程式邏輯 ---
 try:
-    # 永遠顯示進度條
     render_progress(st.session_state.step)
 
     # === 頁面 1: 輸入 ===
@@ -203,7 +204,108 @@ try:
                     with st.spinner("⚖️ AI 律師正在閱卷中..."):
                         try:
                             model = get_model(api_key)
-                            prompt = f"""
-                            你是一位專業律師。請分析以下合約。
-                            【輸出規則】
-                            1. [BLOCK_DATA]分數
+                            # 使用 format 填入內容，避免 f-string 多行縮排錯誤
+                            final_prompt = PROMPT_TEMPLATE.format(user_input)
+                            
+                            response = model.generate_content(final_prompt)
+                            text = response.text
+                            
+                            if "[BLOCK_DATA]" in text:
+                                data = text.split("[BLOCK_DATA]")[1].split("[/BLOCK_DATA]")[0].split(",")
+                                st.session_state.score_data = {
+                                    "score": data[0], "risk": data[1].strip(), "traps": data[2]
+                                }
+                            if "[BLOCK_REPORT]" in text:
+                                st.session_state.analysis_result = text.split("[BLOCK_REPORT]")[1].split("[/BLOCK_REPORT]")[0]
+                            else: st.session_state.analysis_result = text
+
+                            if "[BLOCK_TIPS]" in text:
+                                st.session_state.negotiation_tips = text.split("[BLOCK_TIPS]")[1].split("[/BLOCK_TIPS]")[0]
+                            else: st.session_state.negotiation_tips = "請參考報告。"
+                            
+                            st.session_state.page = 'result'
+                            st.session_state.step = 2
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"分析失敗: {e}")
+
+    # === 頁面 2: 結果 ===
+    elif st.session_state.page == 'result':
+        current_step = st.session_state.step
+
+        # Step 2: 儀表板
+        if current_step == 2:
+            raw_score = st.session_state.score_data['score']
+            score = safe_extract_score(raw_score)
+            traps = safe_extract_int(st.session_state.score_data['traps'])
+            risk = st.session_state.score_data['risk']
+            
+            color = "#ef4444" if score < 60 else "#f59e0b" if score < 80 else "#10b981"
+            
+            st.markdown(f"""
+            <div class="css-card">
+                <h3 style="text-align:center;">📊 風險診斷報告</h3>
+                <div style="display: flex; justify-content: space-around; margin-top: 20px;">
+                    <div style="text-align:center;">
+                        <div style="font-size: 3.5rem; color: {color}; font-weight:800;">{score}</div>
+                        <div>安全評分</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size: 2.5rem; font-weight:800; line-height: 4.5rem;">{risk}</div>
+                        <div>風險等級</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size: 3.5rem; color: #ef4444; font-weight:800;">{traps}</div>
+                        <div>致命陷阱</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c2:
+                if st.button("查看風險細節 ➡️", type="primary"):
+                    st.session_state.step = 3
+                    st.rerun()
+
+        # Step 3: 詳細分析
+        elif current_step == 3:
+            st.markdown('<div class="css-card">', unsafe_allow_html=True)
+            st.markdown("### ⚠️ 深度剖析")
+            st.markdown(st.session_state.analysis_result)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            with st.expander("📄 原始合約內容"):
+                st.text_area("", value=st.session_state.contract_content, height=200, disabled=True)
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("⬅️ 返回總覽"):
+                    st.session_state.step = 2
+                    st.rerun()
+            with c2:
+                if st.button("獲取談判策略 ➡️", type="primary"):
+                    st.session_state.step = 4
+                    st.rerun()
+
+        # Step 4: 談判
+        elif current_step == 4:
+            st.info("💡 這是 AI 為您擬定的談判劇本，請點擊右上角複製。")
+            st.code(st.session_state.negotiation_tips, language="markdown")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("⬅️ 查看分析"):
+                    st.session_state.step = 3
+                    st.rerun()
+            with c2:
+                if st.button("🔄 分析下一份"):
+                    st.session_state.page = 'input'
+                    st.session_state.contract_content = ""
+                    st.session_state.step = 1
+                    st.rerun()
+
+except Exception as e:
+    st.error("⚠️ 系統發生錯誤，請檢查 Secrets 設定 (Key 必須加雙引號)")
+    with st.expander("錯誤詳情"):
+        st.write(e)
