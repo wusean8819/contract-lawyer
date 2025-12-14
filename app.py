@@ -157,4 +157,162 @@ if st.session_state.page == 'input':
     # 標題區
     col_spacer, col_main, col_spacer2 = st.columns([1, 8, 1])
     with col_main:
-        st.markdown("<h1 style='text-align: center; margin-bottom: 10px;'>🛡️ Pocket Lawyer 數位合約律
+        st.markdown("<h1 style='text-align: center; margin-bottom: 10px;'>🛡️ Pocket Lawyer 數位合約律師</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #64748b; font-size: 1.2rem; margin-bottom: 40px;'>3 秒鐘，為您的合約進行醫療級的風險掃描。</p>", unsafe_allow_html=True)
+
+        # 輸入卡片
+        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        st.markdown("### 📄 請貼上合約內容")
+        user_input = st.text_area(
+            label="合約內容",
+            label_visibility="collapsed",
+            value=st.session_state.contract_content,
+            height=350, 
+            placeholder="請直接將合約條款貼在這裡... (支援租賃、勞動、合作備忘錄等各類文件)"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # 操作區
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c1:
+            if st.button("🎲 載入測試範本"):
+                st.session_state.contract_content = """
+                第12條：乙方(員工)若未滿兩年離職，需賠償公司相當於6個月薪資之違約金。
+                第13條：甲方(公司)有權隨時調整乙方之工作內容及地點，乙方不得異議。
+                第14條：本合約終止後，乙方三年內不得從事與甲方相同性質之工作(競業禁止)，且甲方無須支付任何補償。
+                """
+                st.rerun()
+        
+        with c2:
+            start_btn = st.button("🚀 啟動風險分析", type="primary", use_container_width=True)
+
+        # 執行邏輯
+        if start_btn:
+            if not api_key:
+                st.error("🔒 請先在左側側邊欄輸入 API Key")
+            elif not user_input.strip():
+                st.error("📄 請先貼上合約內容")
+            else:
+                # 存檔
+                st.session_state.contract_content = user_input
+                
+                # 進度條動畫
+                progress_container = st.empty()
+                with progress_container.container():
+                    st.info("正在連線律師大腦...")
+                    bar = st.progress(0)
+                    for i in range(100):
+                        time.sleep(0.01)
+                        bar.progress(i + 1)
+                
+                try:
+                    target_model = get_best_model(api_key)
+                    model = genai.GenerativeModel(target_model)
+                    
+                    # Prompt 設計：強制輸出結構化數據
+                    prompt = f"""
+                    你是一位犀利的王牌律師。請分析以下合約。
+                    
+                    【輸出規則】
+                    1. 第一行必須是數據，格式：[DATA]分數,風險等級,陷阱數[/DATA]
+                       (例如：[DATA]45,高風險,3[/DATA])
+                    2. 接著請用 Markdown 撰寫詳細報告，語氣專業但易懂。
+                    3. 必須包含：總結、致命風險條款(紅燈)、修改建議。
+                    
+                    合約內容：
+                    {user_input}
+                    """
+                    
+                    safety = {HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE}
+                    
+                    response = model.generate_content(prompt, safety_settings=safety)
+                    text = response.text
+                    
+                    # 解析數據
+                    if "[DATA]" in text:
+                        data_part = text.split("[DATA]")[1].split("[/DATA]")[0]
+                        score, risk, traps = data_part.split(",")
+                        st.session_state.score_data = {"score": score, "risk": risk, "traps": traps}
+                        final_report = text.split("[/DATA]")[1]
+                    else:
+                        st.session_state.score_data = {"score": "??", "risk": "未知", "traps": "?"}
+                        final_report = text
+                        
+                    st.session_state.analysis_result = final_report
+                    st.session_state.page = 'result'
+                    st.rerun()
+                    
+                except Exception as e:
+                    progress_container.empty()
+                    st.error(f"分析發生錯誤：{e}")
+
+# ==========================================
+#  頁面 B：分析報告 (儀表板)
+# ==========================================
+elif st.session_state.page == 'result':
+    
+    # 頂部導航
+    if st.button("⬅️ 分析下一份合約", use_container_width=False):
+        st.session_state.page = 'input'
+        st.rerun()
+
+    st.markdown("## 📊 合約健檢報告書")
+    
+    # 儀表板區域
+    score_val = st.session_state.score_data['score']
+    risk_val = st.session_state.score_data['risk']
+    traps_val = st.session_state.score_data['traps']
+    
+    # 動態決定顏色
+    try:
+        s = int(score_val)
+        color = "#ef4444" if s < 60 else "#f59e0b" if s < 80 else "#10b981"
+    except:
+        color = "#64748b"
+
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="metric-box" style="border-top-color: {color};">
+            <div class="metric-number" style="color: {color};">{score_val}</div>
+            <div class="metric-label">合約安全分</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col2:
+        st.markdown(f"""
+        <div class="metric-box" style="border-top-color: {color};">
+            <div class="metric-number" style="font-size: 2rem; line-height: 3rem;">{risk_val}</div>
+            <div class="metric-label">整體風險評級</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col3:
+        st.markdown(f"""
+        <div class="metric-box" style="border-top-color: #ef4444;">
+            <div class="metric-number" style="color: #ef4444;">{traps_val}</div>
+            <div class="metric-label">發現致命陷阱</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 詳細內容 Tab
+    tab1, tab2, tab3 = st.tabs(["📑 完整分析報告", "🛡️ 修改建議與談判", "📝 原始合約對照"])
+    
+    with tab1:
+        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        st.markdown(st.session_state.analysis_result)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    with tab2:
+        st.info("💡 這裡提供專業的談判話術，您可以直接複製傳給對方。")
+        # 這裡其實可以再叫一次 AI 專門寫談判信，目前先顯示通用建議
+        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        st.markdown("### 建議修改方向")
+        st.markdown("1. **針對違約金：** 要求設定上限，並排除不可抗力因素。\n2. **針對管轄法院：** 爭取以您所在地的法院為主。\n3. **針對終止條款：** 雙方應有對等的終止權利。")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab3:
+        st.text_area("您的合約原文", value=st.session_state.contract_content, height=500, disabled=True)
