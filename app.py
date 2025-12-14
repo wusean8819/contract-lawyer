@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="Pocket Lawyer 數位律師",
     page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="collapsed" # 預設收起側邊欄，讓畫面更專注
+    initial_sidebar_state="expanded"
 )
 
 # --- 2. 注入蘋果級 CSS (極簡、圓潤、陰影) ---
@@ -334,3 +334,4 @@ elif st.session_state.page == 'result':
 
     with tab4:
         st.text_area("原始合約內容", value=st.session_state.contract_content, height=400, disabled=True)
+
