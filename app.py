@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CSS 美化 ---
+# --- 2. CSS 美化 (旗艦級質感) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
@@ -33,22 +33,20 @@ st.markdown("""
     .metric-number { font-size: 3rem; font-weight: 900; line-height: 1; margin-bottom: 0.5rem; }
     .metric-label { color: #64748b; font-size: 0.875rem; text-transform: uppercase; }
     
-    .negotiation-box {
-        background-color: #f0f9ff; border-left: 5px solid #0ea5e9;
-        padding: 15px; margin-bottom: 15px; border-radius: 0 5px 5px 0;
-        font-size: 1.1rem; line-height: 1.8;
-    }
+    /* 讓 st.code 看起來更像便條紙 */
+    .stCode { font-size: 1.1rem; line-height: 1.6; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 狀態管理 ---
+# --- 3. 狀態管理 (Session State) ---
+# 這是避免 NameError 的關鍵，確保變數永遠存在
 if 'page' not in st.session_state: st.session_state.page = 'input'
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = ""
 if 'negotiation_tips' not in st.session_state: st.session_state.negotiation_tips = "" 
 if 'contract_content' not in st.session_state: st.session_state.contract_content = ""
 if 'score_data' not in st.session_state: st.session_state.score_data = {"score": 0, "risk": "未評估", "traps": 0}
 
-# --- 4. 核心：自動抓取 Secrets ---
+# --- 4. 核心：自動抓取 Secrets 金鑰 ---
 api_key = None
 try:
     if "GOOGLE_API_KEY" in st.secrets:
@@ -101,7 +99,7 @@ def get_best_model(key):
         return "gemini-1.5-flash"
 
 # ==========================================
-#  頁面 A：輸入區
+#  頁面 A：輸入區 (案件受理)
 # ==========================================
 if st.session_state.page == 'input':
     col1, col2, col3 = st.columns([1, 8, 1])
@@ -111,7 +109,7 @@ if st.session_state.page == 'input':
 
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         
-        # 檔案上傳區
+        # 檔案上傳
         uploaded_file = st.file_uploader("📂 上傳合約檔案 (支援 PDF, Word, TXT)", type=["pdf", "docx", "txt"])
         
         if uploaded_file is not None:
@@ -123,6 +121,7 @@ if st.session_state.page == 'input':
             else:
                 st.warning("⚠️ 檔案內容過短或無法讀取文字（請確認 PDF 不是純圖片掃描檔）")
 
+        # 這裡從 st.session_state 讀取內容，確保切換頁面回來內容還在
         user_input = st.text_area("📄 合約內容 (可手動修改)", value=st.session_state.contract_content, height=300, placeholder="文字會自動從檔案讀取，您也可以直接在此貼上...")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -140,6 +139,7 @@ if st.session_state.page == 'input':
                 elif not user_input.strip():
                     st.error("⚠️ 內容為空，請上傳檔案或貼上文字")
                 else:
+                    # 1. 將輸入存入 Session State (避免遺失)
                     st.session_state.contract_content = user_input
                     
                     progress = st.empty()
@@ -158,20 +158,19 @@ if st.session_state.page == 'input':
                         你是一位王牌律師。請分析以下合約。
                         
                         【輸出格式要求】
-                        請將回應切分為三個區塊：
+                        請將回應切分為三個區塊，區塊名稱必須完全準確：
 
                         [BLOCK_DATA]
                         分數,風險等級(高/中/低),陷阱數量
                         [/BLOCK_DATA]
 
                         [BLOCK_REPORT]
-                        (這裡請寫詳細的風險分析報告、總結、紅燈條款，使用 Markdown)
+                        (這裡請寫詳細的風險分析報告、總結、紅燈條款，使用 Markdown 格式)
                         [/BLOCK_REPORT]
 
                         [BLOCK_TIPS]
                         ### 針對第 X 條的談判建議：
-                        "您好，關於合約中第 X 條提到的...我們希望能調整為...因為..."
-                        (請針對最危險的點，寫出 3 段具體的談判逐字稿)
+                        (請針對最危險的點，寫出 3 段具體的談判逐字稿，語氣委婉但堅定)
                         [/BLOCK_TIPS]
 
                         合約內容：
@@ -182,40 +181,44 @@ if st.session_state.page == 'input':
                         response = model.generate_content(prompt, safety_settings=safety)
                         text = response.text
                         
+                        # 解析回傳資料
                         if "[BLOCK_DATA]" in text:
-                            st.session_state.score_data = {
-                                "score": text.split("[BLOCK_DATA]")[1].split(",")[0].strip(),
-                                "risk": text.split(",")[1].strip(),
-                                "traps": text.split(",")[2].split("[/BLOCK_DATA]")[0].strip()
-                            }
+                            data_raw = text.split("[BLOCK_DATA]")[1].split("[/BLOCK_DATA]")[0].strip()
+                            parts = data_raw.split(",")
+                            if len(parts) >= 3:
+                                st.session_state.score_data = {
+                                    "score": parts[0].strip(),
+                                    "risk": parts[1].strip(),
+                                    "traps": parts[2].strip()
+                                }
                         
                         if "[BLOCK_REPORT]" in text:
                             st.session_state.analysis_result = text.split("[BLOCK_REPORT]")[1].split("[/BLOCK_REPORT]")[0].strip()
                         else:
-                            st.session_state.analysis_result = text
+                            st.session_state.analysis_result = text # 萬一沒切分好，顯示全部
 
                         if "[BLOCK_TIPS]" in text:
                             st.session_state.negotiation_tips = text.split("[BLOCK_TIPS]")[1].split("[/BLOCK_TIPS]")[0].strip()
                         else:
                             st.session_state.negotiation_tips = "AI 未能生成特定話術，請參考總結報告。"
 
+                        # 2. 切換頁面
                         st.session_state.page = 'result'
                         st.rerun()
                             
                     except Exception as e:
                         progress.empty()
-                        # 錯誤處理優化：顯示友善訊息
                         st.error("🚧 系統連線忙碌中，請稍等一下再試，或是檢查您的網路。")
                         with st.expander("查看技術錯誤代碼"):
                             st.write(e)
 
 # ==========================================
-#  頁面 B：結果區
+#  頁面 B：分析結果區
 # ==========================================
 elif st.session_state.page == 'result':
     if st.button("⬅️ 分析下一份"):
         st.session_state.page = 'input'
-        st.session_state.contract_content = ""
+        # 不清空合約內容，方便使用者回來修改
         st.rerun()
         
     s_val = st.session_state.score_data['score']
@@ -241,14 +244,15 @@ elif st.session_state.page == 'result':
         st.markdown('</div>', unsafe_allow_html=True)
         
     with tab2:
-        st.info("💡 這是 AI 律師為您擬定的談判劇本，點擊右上角按鈕即可複製傳給對方。")
-        # ★★★ 優化：使用 st.code 讓使用者一鍵複製 ★★★
+        st.info("💡 這是 AI 律師為您擬定的談判劇本，點擊右上角按鈕即可一鍵複製。")
+        # 優化：使用 st.code 呈現，Streamlit 會自動附帶複製按鈕
         if st.session_state.negotiation_tips:
-             st.code(st.session_state.negotiation_tips, language="text")
+             st.code(st.session_state.negotiation_tips, language="markdown")
         else:
              st.write("本次分析未生成特定話術，請參考報告建議。")
         
     with tab3:
-        # ★★★ 優化：收折起來，且修復了變數讀取錯誤 ★★★
+        # 優化：用 expander 收折，保持版面乾淨
+        # ★★★ 關鍵修復：這裡讀取的是 st.session_state，絕對不會再報 NameError ★★★
         with st.expander("點擊展開查看原始合約內容"):
             st.text_area("原始合約", value=st.session_state.contract_content, height=400, disabled=True)
