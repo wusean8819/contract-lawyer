@@ -1,9 +1,9 @@
 import streamlit as st
 import google.generativeai as genai
+import re
 import time
 import pypdf
 import docx
-import re 
 
 # --- 1. 全局設定 ---
 st.set_page_config(
@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS 樣式 (已移除進度條相關代碼) ---
+# --- 2. CSS 樣式 ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
@@ -29,6 +29,37 @@ st.markdown("""
     .stApp { background-color: var(--bg); font-family: 'Noto Sans TC', sans-serif; }
     #MainMenu, footer, header {visibility: hidden;}
     
+    /* 進度條容器 */
+    .progress-container {
+        padding: 20px 0;
+        margin-bottom: 20px;
+        background-color: var(--bg);
+        position: sticky; top: 0; z-index: 999;
+    }
+    .progress-track {
+        display: flex; justify-content: space-between; align-items: center;
+        max-width: 600px; margin: 0 auto; position: relative;
+    }
+    .progress-step {
+        text-align: center; font-size: 0.9rem; color: #94a3b8; font-weight: 600; 
+        position: relative; z-index: 2; background: var(--bg); padding: 0 10px; width: 80px;
+    }
+    .progress-step.active { color: var(--primary); }
+    .progress-step.completed { color: var(--success); }
+    
+    .step-icon {
+        width: 30px; height: 30px; background: #cbd5e1; border-radius: 50%;
+        margin: 0 auto 5px; display: flex; align-items: center; justify-content: center;
+        font-weight: bold; color: white; transition: all 0.3s;
+    }
+    .progress-step.active .step-icon { background: var(--primary); box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2); }
+    .progress-step.completed .step-icon { background: var(--success); }
+    
+    .progress-line-bg {
+        position: absolute; top: 15px; left: 0; width: 100%; height: 2px; 
+        background: #e2e8f0; z-index: 1;
+    }
+
     /* 卡片優化 */
     .css-card {
         background: var(--card); padding: 2rem; border-radius: 12px;
@@ -74,6 +105,27 @@ def safe_extract_int(text):
         return int(nums[0]) if nums else 0
     except: return 0
 
+def render_progress(current_step):
+    steps = ["上傳", "診斷", "分析", "談判"]
+    steps_html = ""
+    for i, label in enumerate(steps, 1):
+        status = "completed" if i < current_step else "active" if i == current_step else ""
+        icon = "✓" if i < current_step else str(i)
+        steps_html += f"""
+        <div class="progress-step {status}">
+            <div class="step-icon">{icon}</div>
+            <div>{label}</div>
+        </div>
+        """
+    st.markdown(f"""
+    <div class="progress-container">
+        <div class="progress-track">
+            <div class="progress-line-bg"></div>
+            {steps_html}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 def read_file(uploaded_file):
     try:
         text = ""
@@ -88,9 +140,32 @@ def read_file(uploaded_file):
         return text
     except: return ""
 
+# ★★★ 關鍵修復：動態搜尋可用模型 (解決 404 錯誤) ★★★
 def get_model(key):
     genai.configure(api_key=key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    try:
+        # 1. 列出所有支援 generateContent 的模型
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # 2. 優先尋找 flash 模型 (速度快)
+        flash_models = [m for m in models if 'flash' in m]
+        if flash_models:
+            return genai.GenerativeModel(flash_models[0])
+            
+        # 3. 其次尋找 pro 模型
+        pro_models = [m for m in models if 'pro' in m]
+        if pro_models:
+            return genai.GenerativeModel(pro_models[0])
+            
+        # 4. 真的都沒有，就回傳列表中的第一個
+        if models:
+            return genai.GenerativeModel(models[0])
+            
+        # 5. 完全連不到列表 (可能 Key 錯了，但這邊先回傳預設)
+        return genai.GenerativeModel("gemini-1.5-flash")
+    except Exception as e:
+        # 如果連 list_models 都失敗，通常是 Key 有問題，但在這裡先不炸開
+        return genai.GenerativeModel("gemini-1.5-flash")
 
 # --- 5. 提示詞模板 ---
 PROMPT_TEMPLATE = """
@@ -123,6 +198,8 @@ with st.sidebar:
 
 # --- 主程式邏輯 ---
 try:
+    render_progress(st.session_state.step)
+
     # === 頁面 1: 輸入 ===
     if st.session_state.page == 'input':
         st.markdown("<h1 style='text-align: center; color: #1e293b;'>Pocket Lawyer 數位律師</h1>", unsafe_allow_html=True)
@@ -147,10 +224,10 @@ try:
                 if not user_input.strip() and not api_key:
                     st.error("⚠️ 請確認 API Key 已設定且內容不為空")
                 else:
-                    with st.spinner("⚖️ AI 律師正在閱卷中..."):
+                    with st.spinner("⚖️ AI 律師正在閱卷中 (自動搜尋最佳模型)..."):
                         try:
+                            # 這裡會動態抓取可用的模型，不會再 404
                             model = get_model(api_key)
-                            # 使用 format 填入內容
                             final_prompt = PROMPT_TEMPLATE.format(user_input)
                             
                             response = model.generate_content(final_prompt)
