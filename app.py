@@ -2,6 +2,8 @@ import streamlit as st
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import time
+import pypdf
+import docx
 
 # --- 1. 全局設定 ---
 st.set_page_config(
@@ -11,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CSS 美化 (旗艦質感) ---
+# --- 2. CSS 美化 ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
@@ -31,7 +33,6 @@ st.markdown("""
     .metric-number { font-size: 3rem; font-weight: 900; line-height: 1; margin-bottom: 0.5rem; }
     .metric-label { color: #64748b; font-size: 0.875rem; text-transform: uppercase; }
     
-    /* 談判話術區塊美化 */
     .negotiation-box {
         background-color: #f0f9ff; border-left: 5px solid #0ea5e9;
         padding: 15px; margin-bottom: 15px; border-radius: 0 5px 5px 0;
@@ -40,23 +41,39 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 狀態管理 (防止 NameError 的關鍵) ---
+# --- 3. 狀態管理 ---
 if 'page' not in st.session_state: st.session_state.page = 'input'
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = ""
 if 'negotiation_tips' not in st.session_state: st.session_state.negotiation_tips = "" 
-if 'contract_content' not in st.session_state: st.session_state.contract_content = "" # 記憶體初始化
+if 'contract_content' not in st.session_state: st.session_state.contract_content = ""
 if 'score_data' not in st.session_state: st.session_state.score_data = {"score": 0, "risk": "未評估", "traps": 0}
 
-# --- 4. 核心：自動抓取 Secrets 金鑰 ---
+# --- 4. 核心：自動抓取 Secrets ---
 api_key = None
 try:
-    # 嘗試從雲端 Secrets 抓取 Key
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
 except:
     pass
 
-# --- 5. 側邊欄 ---
+# --- 5. 檔案讀取函數 (新功能) ---
+def read_file(uploaded_file):
+    try:
+        text = ""
+        if uploaded_file.type == "application/pdf":
+            reader = pypdf.PdfReader(uploaded_file)
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            doc = docx.Document(uploaded_file)
+            text = "\n".join([para.text for para in doc.paragraphs])
+        elif uploaded_file.type == "text/plain":
+            text = uploaded_file.getvalue().decode("utf-8")
+        return text
+    except Exception as e:
+        return f"讀取錯誤: {str(e)}"
+
+# --- 6. 側邊欄 ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2504/2504814.png", width=60)
     st.markdown("## ⚖️ 數位律師 Pro")
@@ -67,12 +84,12 @@ with st.sidebar:
         if api_key: st.success("🟢 開發者金鑰已啟用")
     else:
         st.success("🟢 公共金鑰系統已連線")
-        st.caption("訪客模式：免費額度使用中")
+        st.caption("訪客模式：支援 PDF/Word/Text")
 
     st.markdown("---")
-    st.info("本系統由 Gemini AI 驅動，能為您自動生成談判話術。")
+    st.info("支援上傳合約檔案，AI 自動辨識文字內容。")
 
-# --- 6. 模型選擇邏輯 ---
+# --- 7. 模型選擇邏輯 ---
 def get_best_model(key):
     try:
         genai.configure(api_key=key)
@@ -90,11 +107,25 @@ if st.session_state.page == 'input':
     col1, col2, col3 = st.columns([1, 8, 1])
     with col2:
         st.markdown("<h1 style='text-align: center;'>🛡️ Pocket Lawyer 數位合約律師</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #64748b;'>貼上合約，3 秒鐘生成風險報告與談判逐字稿。</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #64748b;'>上傳 PDF/Word 或貼上文字，3 秒鐘生成風險報告。</p>", unsafe_allow_html=True)
 
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        # 這裡會讀取記憶體中的內容，避免清空
-        user_input = st.text_area("📄 合約內容", value=st.session_state.contract_content, height=350, placeholder="請貼上合約條款...")
+        
+        # --- 新增：檔案上傳區 ---
+        uploaded_file = st.file_uploader("📂 上傳合約檔案 (支援 PDF, Word, TXT)", type=["pdf", "docx", "txt"])
+        
+        if uploaded_file is not None:
+            # 如果有上傳檔案，自動讀取並填入變數
+            file_text = read_file(uploaded_file)
+            if len(file_text) > 50:
+                st.success(f"✅ 已成功讀取 {uploaded_file.name}，共 {len(file_text)} 字。")
+                # 將讀取到的文字預設填入文字框，方便使用者檢查
+                if st.session_state.contract_content == "":
+                    st.session_state.contract_content = file_text
+            else:
+                st.warning("⚠️ 檔案內容過短或無法讀取文字（請確認 PDF 不是純圖片掃描檔）")
+
+        user_input = st.text_area("📄 合約內容 (可手動修改)", value=st.session_state.contract_content, height=300, placeholder="文字會自動從檔案讀取，您也可以直接在此貼上...")
         st.markdown('</div>', unsafe_allow_html=True)
 
         c1, c2 = st.columns([1, 3])
@@ -107,14 +138,13 @@ if st.session_state.page == 'input':
                 if not api_key:
                     st.error("⚠️ 請先設定 Secrets 或輸入 Key")
                 elif not user_input.strip():
-                    st.error("⚠️ 請輸入內容")
+                    st.error("⚠️ 內容為空，請上傳檔案或貼上文字")
                 else:
-                    # ★★★ 關鍵步驟：存入記憶體 ★★★
                     st.session_state.contract_content = user_input
                     
                     progress = st.empty()
                     with progress.container():
-                        st.info("🧠 AI 正在思考談判策略...")
+                        st.info("🧠 AI 正在閱卷中...")
                         bar = st.progress(0)
                         for i in range(100):
                             time.sleep(0.01)
@@ -152,7 +182,6 @@ if st.session_state.page == 'input':
                         response = model.generate_content(prompt, safety_settings=safety)
                         text = response.text
                         
-                        # 解析器
                         if "[BLOCK_DATA]" in text:
                             st.session_state.score_data = {
                                 "score": text.split("[BLOCK_DATA]")[1].split(",")[0].strip(),
@@ -183,9 +212,10 @@ if st.session_state.page == 'input':
 elif st.session_state.page == 'result':
     if st.button("⬅️ 分析下一份"):
         st.session_state.page = 'input'
+        # 清空上傳的檔案內容，以免混淆
+        st.session_state.contract_content = ""
         st.rerun()
         
-    # 儀表板
     s_val = st.session_state.score_data['score']
     r_val = st.session_state.score_data['risk']
     t_val = st.session_state.score_data['traps']
@@ -201,7 +231,6 @@ elif st.session_state.page == 'result':
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 分頁內容
     tab1, tab2, tab3 = st.tabs(["📑 分析報告", "🛡️ 談判話術 (AI 擬定)", "📝 原始條文"])
     
     with tab1:
@@ -220,5 +249,4 @@ elif st.session_state.page == 'result':
         """, unsafe_allow_html=True)
 
     with tab3:
-        # ★★★ 這裡現在讀取的是 st.session_state，絕對不會再報錯 ★★★
         st.text_area("原始合約", value=st.session_state.contract_content, height=400, disabled=True)
