@@ -189,4 +189,160 @@ with st.sidebar:
 
 # --- 主程式 ---
 
-# 每一頁的最
+# 每一頁的最上方，都先渲染進度條
+render_progress(st.session_state.step)
+
+# ==========================================
+#  頁面 A：輸入區 (Step 1)
+# ==========================================
+if st.session_state.page == 'input':
+    
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 30px;">
+        <h1 style="font-size: 2rem; color: #1e293b;">數位合約律師</h1>
+        <p style="color: #64748b;">拖放合約，AI 立即為您偵測法律陷阱。</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 6, 1])
+    with col2:
+        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        
+        uploaded_file = st.file_uploader("📂 上傳檔案 (PDF / Word / TXT)", type=["pdf", "docx", "txt"])
+        if uploaded_file:
+            text = read_file(uploaded_file)
+            if len(text) > 10:
+                st.session_state.contract_content = text
+                st.success(f"✅ 已讀取：{uploaded_file.name}")
+        
+        user_input = st.text_area("或貼上條款內容：", value=st.session_state.contract_content, height=200)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.button("🚀 開始分析", type="primary", use_container_width=True):
+            st.session_state.contract_content = user_input
+            if not user_input.strip() and not api_key:
+                st.error("⚠️ 請確認 API Key 與合約內容")
+            else:
+                progress_bar = st.progress(0)
+                try:
+                    model = genai.GenerativeModel(get_model(api_key))
+                    prompt = f"""
+                    你是一位專業律師。請分析以下合約。
+                    
+                    【輸出規則】
+                    1. [BLOCK_DATA]分數(0-100),風險等級,陷阱數[/BLOCK_DATA]
+                    2. [BLOCK_REPORT] 用 Markdown 列出 3 個致命風險。
+                    3. [BLOCK_TIPS] 針對風險提供談判話術。
+                    
+                    合約：{user_input}
+                    """
+                    response = model.generate_content(prompt)
+                    text = response.text
+                    progress_bar.progress(100)
+                    
+                    # 解析
+                    if "[BLOCK_DATA]" in text:
+                        data = text.split("[BLOCK_DATA]")[1].split("[/BLOCK_DATA]")[0].split(",")
+                        # 直接存原始字串沒關係，我們在顯示時再轉
+                        st.session_state.score_data = {
+                            "score": data[0], 
+                            "risk": data[1].strip(),
+                            "traps": data[2]
+                        }
+                    
+                    if "[BLOCK_REPORT]" in text:
+                        st.session_state.analysis_result = text.split("[BLOCK_REPORT]")[1].split("[/BLOCK_REPORT]")[0]
+                    else: st.session_state.analysis_result = text
+
+                    if "[BLOCK_TIPS]" in text:
+                        st.session_state.negotiation_tips = text.split("[BLOCK_TIPS]")[1].split("[/BLOCK_TIPS]")[0]
+                    else: st.session_state.negotiation_tips = "請參考報告。"
+                    
+                    st.session_state.page = 'result'
+                    st.session_state.step = 2
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error("分析錯誤，請重試")
+                    st.write(e)
+
+# ==========================================
+#  頁面 B：結果流程
+# ==========================================
+elif st.session_state.page == 'result':
+    
+    current_step = st.session_state.step
+
+    # --- Step 2: 儀表板 ---
+    if current_step == 2:
+        # ★★★ 關鍵修復：在這裡使用 safe_extract_score 進行轉換，而不是直接 int() ★★★
+        raw_score = st.session_state.score_data['score']
+        score = safe_extract_score(raw_score)
+        
+        traps = safe_extract_int(st.session_state.score_data['traps'])
+        risk = st.session_state.score_data['risk']
+        
+        color = "#ef4444" if score < 60 else "#f59e0b" if score < 80 else "#10b981"
+        
+        st.markdown(f"""
+        <div class="css-card">
+            <h3 style="text-align:center; color:#1e293b;">📊 風險診斷報告</h3>
+            <div style="display: flex; justify-content: space-around; margin-top: 20px;">
+                <div class="stat-box">
+                    <div class="stat-num" style="color: {color};">{score}</div>
+                    <div class="stat-label">安全評分</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-num" style="font-size: 2.5rem; line-height: 4rem;">{risk}</div>
+                    <div class="stat-label">風險等級</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-num" style="color: #ef4444;">{traps}</div>
+                    <div class="stat-label">致命陷阱</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            if st.button("查看風險細節 ➡️", type="primary", use_container_width=True):
+                st.session_state.step = 3
+                st.rerun()
+
+    # --- Step 3: 詳細分析 ---
+    elif current_step == 3:
+        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        st.markdown("### ⚠️ 深度剖析")
+        st.markdown(st.session_state.analysis_result)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        with st.expander("📄 原始合約內容"):
+            st.text_area("", value=st.session_state.contract_content, height=200, disabled=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("⬅️ 返回總覽"):
+                st.session_state.step = 2
+                st.rerun()
+        with c2:
+            if st.button("獲取談判策略 ➡️", type="primary"):
+                st.session_state.step = 4
+                st.rerun()
+
+    # --- Step 4: 談判 ---
+    elif current_step == 4:
+        st.info("這是 AI 為您擬定的談判劇本，請點擊右上角複製。")
+        st.code(st.session_state.negotiation_tips, language="markdown")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("⬅️ 查看分析"):
+                st.session_state.step = 3
+                st.rerun()
+        with c2:
+            if st.button("🔄 分析下一份合約"):
+                st.session_state.page = 'input'
+                st.session_state.contract_content = ""
+                st.session_state.step = 1
+                st.rerun()
