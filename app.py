@@ -16,11 +16,9 @@ st.markdown("""
 <style>
     .stApp { font-family: "Microsoft JhengHei", sans-serif; }
     
-    /* 隱藏預設的選單與 footer，讓畫面更乾淨 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* 美化分數卡片 */
     .score-card {
         background-color: #f0f2f6;
         padding: 20px;
@@ -32,10 +30,7 @@ st.markdown("""
     .score-title { font-size: 18px; color: #555; }
     .score-value { font-size: 42px; font-weight: bold; color: #2c3e50; }
     
-    /* 美化 Tabs 分頁 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 20px;
-    }
+    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
     .stTabs [data-baseweb="tab"] {
         height: 50px;
         white-space: pre-wrap;
@@ -52,11 +47,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. 狀態管理 (Session State) ---
-# 這是實現「換頁」的關鍵
 if 'page' not in st.session_state:
-    st.session_state.page = 'input'  # 預設在輸入頁
+    st.session_state.page = 'input'
 if 'analysis_result' not in st.session_state:
-    st.session_state.analysis_result = "" # 儲存分析結果
+    st.session_state.analysis_result = ""
+# ★★★ 關鍵修復：增加一個記憶欄位來存合約內容 ★★★
+if 'contract_content' not in st.session_state:
+    st.session_state.contract_content = ""
 
 # --- 4. 側邊欄與自動導航 ---
 with st.sidebar:
@@ -66,14 +63,12 @@ with st.sidebar:
     
     api_key = st.text_input("輸入 Google API Key", type="password")
     
-    # 自動抓模型邏輯
     target_model_name = "尚未連線"
     if api_key:
         try:
             genai.configure(api_key=api_key)
             available_models = [m.name.replace('models/', '') for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            # 優先順序：flash-latest -> 1.5-flash -> 2.0-flash
             if any('flash-latest' in m for m in available_models):
                 target_model_name = next(m for m in available_models if 'flash-latest' in m)
             elif any('1.5-flash' in m for m in available_models):
@@ -89,11 +84,11 @@ with st.sidebar:
             target_model_name = "gemini-1.5-flash"
 
     st.markdown("---")
-    # 如果已經在結果頁，顯示「分析新合約」按鈕
     if st.session_state.page == 'result':
         if st.button("⬅️ 分析下一份合約", use_container_width=True):
             st.session_state.page = 'input'
             st.session_state.analysis_result = ""
+            st.session_state.contract_content = "" # 清空舊合約
             st.rerun()
 
 # --- 5. 頁面邏輯切換 ---
@@ -104,7 +99,8 @@ if st.session_state.page == 'input':
     st.markdown("#### 請輸入合約內容，AI 將為您切換至專業分析視圖。")
     
     with st.container():
-        contract_content = st.text_area(
+        # 這裡用一個暫時變數接使用者的輸入
+        user_input = st.text_area(
             "📄 合約條款貼上區：", 
             height=300, 
             placeholder="請直接貼上整份合約或有疑慮的條款..."
@@ -117,16 +113,16 @@ if st.session_state.page == 'input':
     if start_btn:
         if not api_key:
             st.warning("⚠️ 請先在左側輸入 API Key")
-        elif not contract_content.strip():
+        elif not user_input.strip():
             st.warning("⚠️ 請貼上合約內容")
         else:
-            # 轉場動畫
             with st.spinner("⚖️ 正在切換至分析室...AI 律師閱卷中..."):
                 try:
-                    # 設定模型
+                    # ★★★ 關鍵修復：在換頁前，把內容存進永久記憶體 ★★★
+                    st.session_state.contract_content = user_input
+                    
                     model = genai.GenerativeModel(target_model_name)
                     
-                    # 提示詞 (要求詳細 Markdown)
                     prompt = f"""
                     你是一位專業律師。請分析以下合約。
                     請務必使用 Markdown 格式，並包含以下章節：
@@ -145,10 +141,9 @@ if st.session_state.page == 'input':
 
                     ---
                     合約內容：
-                    {contract_content}
+                    {user_input}
                     """
                     
-                    # 執行分析
                     safety_settings = {
                         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
                         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -158,31 +153,24 @@ if st.session_state.page == 'input':
                     
                     response = model.generate_content(prompt, safety_settings=safety_settings)
                     
-                    # 儲存結果並切換頁面
                     st.session_state.analysis_result = response.text
-                    st.session_state.page = 'result' # 切換狀態
-                    st.rerun() # 強制重整畫面以進入新頁面
+                    st.session_state.page = 'result'
+                    st.rerun()
                     
                 except Exception as e:
                     st.error(f"分析發生錯誤：{e}")
 
-# === 頁面 B：分析報告介面 (全螢幕呈現) ===
+# === 頁面 B：分析報告介面 ===
 elif st.session_state.page == 'result':
     st.title("📊 合約健檢報告書")
     
-    # 建立分頁籤 (這是你要的下一頁、下一頁的感覺)
     tab1, tab2, tab3, tab4 = st.tabs(["🚦 總覽與評分", "⚖️ 深度分析", "🛡️ 修改建議", "📝 原始條文"])
     
-    # 解析 AI 回傳的 Markdown 內容 (簡單切割)
     full_text = st.session_state.analysis_result
-    
-    # 為了方便顯示，我們直接顯示完整內容，但你可以教使用者點擊 Tab 查看不同角度
-    # 這裡我們用比較聰明的方式：在 Tab 1 顯示重點，Tab 2 顯示全文
     
     with tab1:
         st.markdown("### 🎯 核心風險評估")
         st.info("💡 提示：請點擊上方分頁標籤查看詳細分析與建議。")
-        # 這裡顯示 AI 的前段結果 (通常是總覽)
         if "# ⚖️ 深度風險分析" in full_text:
             summary_part = full_text.split("# ⚖️ 深度風險分析")[0]
             st.markdown(summary_part)
@@ -191,7 +179,6 @@ elif st.session_state.page == 'result':
 
     with tab2:
         st.markdown("### ⚠️ 關鍵條款審查")
-        # 嘗試擷取中間段落
         if "# ⚖️ 深度風險分析" in full_text and "# 🛡️ 具體修改建議" in full_text:
             risk_part = full_text.split("# ⚖️ 深度風險分析")[1].split("# 🛡️ 具體修改建議")[0]
             st.markdown(risk_part)
@@ -208,7 +195,8 @@ elif st.session_state.page == 'result':
 
     with tab4:
         st.markdown("### 📄 原始合約內容")
-        st.text_area("您輸入的內容", value=contract_content, height=400, disabled=True)
+        # ★★★ 關鍵修復：這裡改讀取「永久記憶體」裡的內容，而不是區域變數 ★★★
+        st.text_area("您輸入的內容", value=st.session_state.contract_content, height=400, disabled=True)
     
     st.divider()
     col_back, col_print = st.columns([1, 4])
@@ -216,4 +204,5 @@ elif st.session_state.page == 'result':
         if st.button("⬅️ 重新分析"):
             st.session_state.page = 'input'
             st.session_state.analysis_result = ""
+            st.session_state.contract_content = ""
             st.rerun()
