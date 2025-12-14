@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS 樣式 (進度條強制置頂版) ---
+# --- 2. CSS 樣式 ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
@@ -30,7 +30,7 @@ st.markdown("""
     .stApp { background-color: var(--bg); font-family: 'Noto Sans TC', sans-serif; }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* 進度條容器 - 強制高度與間距 */
+    /* 進度條容器 */
     .progress-container {
         padding: 10px 0 30px 0;
         margin-bottom: 20px;
@@ -86,10 +86,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 狀態管理 ---
+# --- 3. 狀態管理 (修復 SyntaxError 的部分) ---
 if 'page' not in st.session_state: st.session_state.page = 'input'
 if 'step' not in st.session_state: st.session_state.step = 1 
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = ""
+# 下面這行就是原本報錯的地方，現在修復了
 if 'negotiation_tips' not in st.session_state: st.session_state.negotiation_tips = "" 
 if 'contract_content' not in st.session_state: st.session_state.contract_content = ""
 if 'score_data' not in st.session_state: st.session_state.score_data = {"score": 0, "risk": "未評估", "traps": 0}
@@ -221,47 +222,47 @@ if st.session_state.page == 'input':
             if not user_input.strip() and not api_key:
                 st.error("⚠️ 請確認 API Key 設定正確 (需加上雙引號) 且內容不為空")
             else:
-                progress_bar = st.progress(0)
-                try:
-                    model = genai.GenerativeModel(get_model(api_key))
-                    prompt = f"""
-                    你是一位專業律師。請分析以下合約。
-                    
-                    【輸出規則】
-                    1. [BLOCK_DATA]分數(0-100),風險等級,陷阱數[/BLOCK_DATA]
-                    2. [BLOCK_REPORT] 請用 Markdown 格式列出 3 個致命風險。使用 Emoji 🔴 ⚠️。
-                    3. [BLOCK_TIPS] 提供談判話術。
-                    
-                    合約：{user_input}
-                    """
-                    response = model.generate_content(prompt)
-                    text = response.text
-                    progress_bar.progress(100)
-                    
-                    # 解析資料
-                    if "[BLOCK_DATA]" in text:
-                        data = text.split("[BLOCK_DATA]")[1].split("[/BLOCK_DATA]")[0].split(",")
-                        st.session_state.score_data = {
-                            "score": data[0], 
-                            "risk": data[1].strip(),
-                            "traps": data[2]
-                        }
-                    
-                    if "[BLOCK_REPORT]" in text:
-                        st.session_state.analysis_result = text.split("[BLOCK_REPORT]")[1].split("[/BLOCK_REPORT]")[0]
-                    else: st.session_state.analysis_result = text
+                # 這裡使用 st.spinner 來轉圈圈，取代原本會留下的 st.status
+                with st.spinner("⚖️ AI 律師正在閱卷中..."):
+                    try:
+                        model = genai.GenerativeModel(get_model(api_key))
+                        prompt = f"""
+                        你是一位專業律師。請分析以下合約。
+                        
+                        【輸出規則】
+                        1. [BLOCK_DATA]分數(0-100),風險等級,陷阱數[/BLOCK_DATA]
+                        2. [BLOCK_REPORT] 請用 Markdown 格式列出 3 個致命風險。使用 Emoji 🔴 ⚠️。
+                        3. [BLOCK_TIPS] 提供談判話術。
+                        
+                        合約：{user_input}
+                        """
+                        response = model.generate_content(prompt)
+                        text = response.text
+                        
+                        # 解析資料
+                        if "[BLOCK_DATA]" in text:
+                            data = text.split("[BLOCK_DATA]")[1].split("[/BLOCK_DATA]")[0].split(",")
+                            st.session_state.score_data = {
+                                "score": data[0], 
+                                "risk": data[1].strip(),
+                                "traps": data[2]
+                            }
+                        
+                        if "[BLOCK_REPORT]" in text:
+                            st.session_state.analysis_result = text.split("[BLOCK_REPORT]")[1].split("[/BLOCK_REPORT]")[0]
+                        else: st.session_state.analysis_result = text
 
-                    if "[BLOCK_TIPS]" in text:
-                        st.session_state.negotiation_tips = text.split("[BLOCK_TIPS]")[1].split("[/BLOCK_TIPS]")[0]
-                    else: st.session_state.negotiation_tips = "請參考報告。"
-                    
-                    st.session_state.page = 'result'
-                    st.session_state.step = 2
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error("🚧 分析中斷，請檢查 Secrets 設定 (Key 必須加雙引號)")
-                    with st.expander("查看錯誤詳情"): st.write(e)
+                        if "[BLOCK_TIPS]" in text:
+                            st.session_state.negotiation_tips = text.split("[BLOCK_TIPS]")[1].split("[/BLOCK_TIPS]")[0]
+                        else: st.session_state.negotiation_tips = "請參考報告。"
+                        
+                        st.session_state.page = 'result'
+                        st.session_state.step = 2
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error("🚧 分析中斷，請檢查 Secrets 設定 (Key 必須加雙引號)")
+                        with st.expander("查看錯誤詳情"): st.write(e)
 
 # ==========================================
 #  頁面 B：結果流程
@@ -271,7 +272,7 @@ elif st.session_state.page == 'result':
 
     # --- Step 2: 儀表板 ---
     if current_step == 2:
-        # ★★★ 呼叫防呆函數 ★★★
+        # 呼叫防呆函數
         raw_score = st.session_state.score_data['score']
         score = safe_extract_score(raw_score)
         traps = safe_extract_int(st.session_state.score_data['traps'])
