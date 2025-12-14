@@ -4,7 +4,7 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import time
 import pypdf
 import docx
-import re 
+import re # 引入正規表達式，這是處理複雜字串的關鍵工具
 
 # --- 1. 全局設定 ---
 st.set_page_config(
@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS 樣式 (修復進度條顯示問題) ---
+# --- 2. CSS 樣式 (優化進度條與閱讀體驗) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
@@ -25,15 +25,15 @@ st.markdown("""
         --danger: #ef4444;     
         --bg: #f8fafc;         
         --card: #ffffff;
+        --text-dark: #1e293b;
     }
 
-    .stApp { background-color: var(--bg); font-family: 'Noto Sans TC', sans-serif; }
+    .stApp { background-color: var(--bg); font-family: 'Noto Sans TC', sans-serif; color: var(--text-dark); }
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* 進度條 - 強制置頂並確保可見 */
+    /* --- 進度條優化 --- */
     .progress-container {
-        padding: 20px 0 40px 0;
-        background: transparent;
+        padding: 20px 0 40px 0; margin-bottom: 20px;
     }
     .progress-track {
         display: flex; justify-content: space-between; align-items: center;
@@ -41,7 +41,7 @@ st.markdown("""
     }
     .progress-step {
         text-align: center; font-size: 0.9rem; color: #94a3b8; font-weight: 600; 
-        position: relative; z-index: 2; background: var(--bg); padding: 0 10px;
+        position: relative; z-index: 2; background: var(--bg); padding: 0 15px;
     }
     .progress-step.active { color: var(--primary); }
     .progress-step.completed { color: var(--success); }
@@ -49,23 +49,27 @@ st.markdown("""
     .step-icon {
         width: 32px; height: 32px; background: #cbd5e1; border-radius: 50%;
         margin: 0 auto 8px; display: flex; align-items: center; justify-content: center;
-        font-weight: bold; color: white; transition: all 0.3s;
+        font-weight: bold; color: white; transition: all 0.3s; font-size: 1rem;
     }
     .progress-step.active .step-icon { background: var(--primary); box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2); }
     .progress-step.completed .step-icon { background: var(--success); }
     
-    /* 連接線 */
     .progress-line-bg {
         position: absolute; top: 16px; left: 0; width: 100%; height: 3px; 
         background: #e2e8f0; z-index: 1;
     }
     
-    /* 卡片設計 */
+    /* --- 卡片與內容 --- */
     .css-card {
         background: var(--card); padding: 2.5rem; border-radius: 16px;
         box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
         margin-bottom: 20px;
     }
+    
+    /* 優化 Markdown 閱讀體驗 */
+    .markdown-text h3 { color: var(--danger) !important; margin-top: 1.5rem; }
+    .markdown-text strong { color: var(--text-dark); font-weight: 700; }
+    .markdown-text li { margin-bottom: 0.5rem; }
 
     /* 儀表板 */
     .stat-box { text-align: center; padding: 10px; }
@@ -76,9 +80,9 @@ st.markdown("""
     .stButton>button {
         border-radius: 8px; font-weight: 600; height: 3.5rem; font-size: 1rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
+        transition: all 0.2s;
     }
-    .stButton>button:hover { border-color: var(--primary); color: var(--primary); }
-    /* Primary 按鈕 */
+    .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
     div[data-testid="stVerticalBlock"] > div > div > div > div > .stButton > button:active {
         background-color: var(--primary); color: white;
     }
@@ -91,32 +95,39 @@ if 'step' not in st.session_state: st.session_state.step = 1
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = ""
 if 'negotiation_tips' not in st.session_state: st.session_state.negotiation_tips = "" 
 if 'contract_content' not in st.session_state: st.session_state.contract_content = ""
-# 這裡初始化為 0 (int)，避免一開始就報錯
+# 初始化為 0，避免報錯
 if 'score_data' not in st.session_state: st.session_state.score_data = {"score": 0, "risk": "未評估", "traps": 0}
 
-# --- 4. 關鍵修復：強力數字提取器 ---
+# --- 4. 關鍵修復：超級防呆分數提取器 ---
 def safe_extract_score(text):
     """ 
-    不管 AI 回傳什麼鬼東西 (例如 '1/10', 'Score: 80'), 
-    我們都強制轉成 0-100 的整數。
+    核心功能：處理 AI 回傳的各種奇葩分數格式
+    例如: "1/10", "Score: 85", "90分", "極高風險(10)"
     """
     try:
-        # 1. 轉字串
-        text_str = str(text)
-        # 2. 抓出所有數字
+        text_str = str(text).strip()
+        
+        # 優先處理分數格式 "x/y"
+        fraction_match = re.search(r'(\d+)\s*/\s*(\d+)', text_str)
+        if fraction_match:
+            numerator = int(fraction_match.group(1))
+            denominator = int(fraction_match.group(2))
+            if denominator > 0:
+                # 轉換為百分制
+                return int((numerator / denominator) * 100)
+
+        # 如果不是分數，抓取第一個出現的數字
         nums = re.findall(r'\d+', text_str)
-        if not nums: return 0
-        
-        val = int(nums[0])
-        
-        # 3. 特殊邏輯：如果 AI 給 1/10 (即 1 分)，我們自動修正為 10 分
-        if val <= 10 and ("10" in text_str or "/" in text_str):
-            return val * 10
-            
-        # 4. 確保不超過 100
-        return min(val, 100)
+        if nums:
+            val = int(nums[0])
+            # 如果數字很小且原文包含"10"，假設是十分制，乘以 10
+            if val <= 10 and "10" in text_str:
+                return val * 10
+            return min(val, 100) # 確保不超過 100
+
+        return 0 # 沒抓到數字就回傳 0
     except:
-        return 0
+        return 0 # 發生任何錯誤都回傳 0，保證不崩潰
 
 def safe_extract_int(text):
     """ 一般數字提取 (用於陷阱數量) """
@@ -127,7 +138,7 @@ def safe_extract_int(text):
 
 def render_progress(current_step):
     """ 渲染進度條 (純 HTML/CSS) """
-    steps = ["上傳合約", "風險診斷", "詳細分析", "談判策略"]
+    steps = ["上傳合約", "風險診斷", "深度剖析", "談判策略"]
     
     steps_html = ""
     for i, label in enumerate(steps, 1):
@@ -189,14 +200,14 @@ with st.sidebar:
 
 # --- 主程式 ---
 
-# 每一頁的最上方，都先渲染進度條
-render_progress(st.session_state.step)
-
 # ==========================================
 #  頁面 A：輸入區 (Step 1)
 # ==========================================
 if st.session_state.page == 'input':
     
+    # ★★★ 強制在最上方渲染進度條 ★★★
+    render_progress(1)
+
     st.markdown("""
     <div style="text-align: center; margin-bottom: 30px;">
         <h1 style="font-size: 2rem; color: #1e293b;">數位合約律師</h1>
@@ -226,13 +237,20 @@ if st.session_state.page == 'input':
                 progress_bar = st.progress(0)
                 try:
                     model = genai.GenerativeModel(get_model(api_key))
+                    # ★★★ 優化 Prompt：要求更視覺化的 Markdown 輸出 ★★★
                     prompt = f"""
-                    你是一位專業律師。請分析以下合約。
+                    你是一位犀利的王牌律師。請分析以下合約。
                     
                     【輸出規則】
                     1. [BLOCK_DATA]分數(0-100),風險等級,陷阱數[/BLOCK_DATA]
-                    2. [BLOCK_REPORT] 用 Markdown 列出 3 個致命風險。
-                    3. [BLOCK_TIPS] 針對風險提供談判話術。
+                    2. [BLOCK_REPORT] 請用高度視覺化的 Markdown 格式列出 3 個最致命的風險。
+                       格式要求：
+                       ### 🔴 風險標題 (請用紅燈 Emoji 開頭)
+                       **嚴重程度：極高**
+                       **風險詳情：** 這裡寫詳細解釋，請多用條列式和粗體強調關鍵字，讓讀者一眼看出重點。
+                       ---
+                       (下一個風險...)
+                    3. [BLOCK_TIPS] 針對風險提供談判話術，請用條列式列出。
                     
                     合約：{user_input}
                     """
@@ -243,7 +261,7 @@ if st.session_state.page == 'input':
                     # 解析
                     if "[BLOCK_DATA]" in text:
                         data = text.split("[BLOCK_DATA]")[1].split("[/BLOCK_DATA]")[0].split(",")
-                        # 直接存原始字串沒關係，我們在顯示時再轉
+                        # 存原始資料
                         st.session_state.score_data = {
                             "score": data[0], 
                             "risk": data[1].strip(),
@@ -263,8 +281,8 @@ if st.session_state.page == 'input':
                     st.rerun()
                     
                 except Exception as e:
-                    st.error("分析錯誤，請重試")
-                    st.write(e)
+                    st.error("分析錯誤，請重試或是檢查 Key")
+                    # st.write(e) # 不顯示醜醜的錯誤碼給使用者看
 
 # ==========================================
 #  頁面 B：結果流程
@@ -272,10 +290,12 @@ if st.session_state.page == 'input':
 elif st.session_state.page == 'result':
     
     current_step = st.session_state.step
+    # ★★★ 強制在最上方渲染進度條 ★★★
+    render_progress(current_step)
 
     # --- Step 2: 儀表板 ---
     if current_step == 2:
-        # ★★★ 關鍵修復：在這裡使用 safe_extract_score 進行轉換，而不是直接 int() ★★★
+        # ★★★ 關鍵修復：使用 safe_extract_score 處理分數 ★★★
         raw_score = st.session_state.score_data['score']
         score = safe_extract_score(raw_score)
         
@@ -310,10 +330,11 @@ elif st.session_state.page == 'result':
                 st.session_state.step = 3
                 st.rerun()
 
-    # --- Step 3: 詳細分析 ---
+    # --- Step 3: 詳細分析 (優化閱讀體驗) ---
     elif current_step == 3:
-        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        st.markdown('<div class="css-card markdown-text">', unsafe_allow_html=True)
         st.markdown("### ⚠️ 深度剖析")
+        # 這裡顯示的是優化過、帶有 Emoji 和粗體的 Markdown
         st.markdown(st.session_state.analysis_result)
         st.markdown('</div>', unsafe_allow_html=True)
         
