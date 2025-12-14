@@ -1,4 +1,4 @@
-=import streamlit as st
+import streamlit as st
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import time
@@ -108,3 +108,4 @@ else:
 
     except Exception as e:
         st.error(f"連線設定錯誤：{e}")
+
