@@ -56,7 +56,7 @@ try:
 except:
     pass
 
-# --- 5. 檔案讀取函數 (新功能) ---
+# --- 5. 檔案讀取函數 ---
 def read_file(uploaded_file):
     try:
         text = ""
@@ -111,15 +111,13 @@ if st.session_state.page == 'input':
 
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         
-        # --- 新增：檔案上傳區 ---
+        # 檔案上傳區
         uploaded_file = st.file_uploader("📂 上傳合約檔案 (支援 PDF, Word, TXT)", type=["pdf", "docx", "txt"])
         
         if uploaded_file is not None:
-            # 如果有上傳檔案，自動讀取並填入變數
             file_text = read_file(uploaded_file)
             if len(file_text) > 50:
                 st.success(f"✅ 已成功讀取 {uploaded_file.name}，共 {len(file_text)} 字。")
-                # 將讀取到的文字預設填入文字框，方便使用者檢查
                 if st.session_state.contract_content == "":
                     st.session_state.contract_content = file_text
             else:
@@ -134,7 +132,9 @@ if st.session_state.page == 'input':
                 st.session_state.contract_content = "第12條：乙方若未滿兩年離職，需賠償6個月薪資。\n第13條：甲方有權隨時調整乙方工作內容及地點，乙方不得異議。"
                 st.rerun()
         with c2:
-            if st.button("🚀 啟動風險分析", type="primary", use_container_width=True):
+            start_btn = st.button("🚀 啟動風險分析", type="primary", use_container_width=True)
+
+            if start_btn:
                 if not api_key:
                     st.error("⚠️ 請先設定 Secrets 或輸入 Key")
                 elif not user_input.strip():
@@ -204,7 +204,10 @@ if st.session_state.page == 'input':
                             
                     except Exception as e:
                         progress.empty()
-                        st.error(f"連線錯誤：{e}")
+                        # 錯誤處理優化：顯示友善訊息
+                        st.error("🚧 系統連線忙碌中，請稍等一下再試，或是檢查您的網路。")
+                        with st.expander("查看技術錯誤代碼"):
+                            st.write(e)
 
 # ==========================================
 #  頁面 B：結果區
@@ -212,7 +215,6 @@ if st.session_state.page == 'input':
 elif st.session_state.page == 'result':
     if st.button("⬅️ 分析下一份"):
         st.session_state.page = 'input'
-        # 清空上傳的檔案內容，以免混淆
         st.session_state.contract_content = ""
         st.rerun()
         
@@ -231,7 +233,7 @@ elif st.session_state.page == 'result':
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["📑 分析報告", "🛡️ 談判話術 (AI 擬定)", "📝 原始條文"])
+    tab1, tab2, tab3 = st.tabs(["📑 分析報告", "🛡️ 談判話術 (可複製)", "📝 原始條文"])
     
     with tab1:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -239,14 +241,14 @@ elif st.session_state.page == 'result':
         st.markdown('</div>', unsafe_allow_html=True)
         
     with tab2:
-        st.info("💡 這是 AI 律師為您擬定的談判劇本，您可以直接複製傳給對方。")
-        st.markdown(f"""
-        <div class="css-card">
-            <div class="negotiation-box">
-                {st.session_state.negotiation_tips}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.info("💡 這是 AI 律師為您擬定的談判劇本，點擊右上角按鈕即可複製傳給對方。")
+        # ★★★ 優化：使用 st.code 讓使用者一鍵複製 ★★★
+        if st.session_state.negotiation_tips:
+             st.code(st.session_state.negotiation_tips, language="text")
+        else:
+             st.write("本次分析未生成特定話術，請參考報告建議。")
+        
     with tab3:
-        st.text_area("原始合約", value=st.session_state.contract_content, height=400, disabled=True)
+        # ★★★ 優化：收折起來，且修復了變數讀取錯誤 ★★★
+        with st.expander("點擊展開查看原始合約內容"):
+            st.text_area("原始合約", value=st.session_state.contract_content, height=400, disabled=True)
